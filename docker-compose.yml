@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  chronos-sidecar:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "50051:50051"
+    depends_on:
+      - chronos-cache
+    environment:
+      - REDIS_URL=chronos-cache:6379
+
+  chronos-cache:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+volumes:
+  redis_data:

@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package chronos.v1;
+option go_package = "github.com/vamsikrishnao/chronos-guard/proto/chronos/v1;chronosv1";
+
+service GuardService {
+  // Evaluates a single execution step of an AI Agent to enforce guardrails.
+  rpc CheckBudget (CheckBudgetRequest) returns (CheckBudgetResponse);
+}
+
+message CheckBudgetRequest {
+  string tenant_id = 1;       // Multi-tenant context isolation
+  string run_id = 2;          // Execution context tracing identifier
+  int64 tokens_spent = 3;     // Cumulative delta of tokens consumed this step
+  string state_signature = 4; // SHA256/MD5 representation of current agent states
+}
+
+message CheckBudgetResponse {
+  enum Action {
+    ACTION_UNSPECIFIED = 0;
+    ACTION_ALLOW = 1;         // Execution loop safe
+    ACTION_THROTTLE = 2;      // Approaching threshold; inject deliberate delay
+    ACTION_BLOCK = 3;         // Circuit breaker tripped; abort step
+  }
+  Action action = 1;
+  string reason = 2;          // Diagnostic metadata message
+}
