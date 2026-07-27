@@ -1,23 +1,64 @@
 version: '3.8'
 
+networks:
+  chronos-mesh:
+    driver: bridge
+
 services:
-  chronos-sidecar:
+  # ============================================================================
+  # 1. CHRONOS-GUARD PLATFORM PROXY
+  # ============================================================================
+  chronos-guard:
     build:
       context: .
       dockerfile: Dockerfile
+    container_name: chronos_guard_sidecar
     ports:
-      - "50051:50051"
-    depends_on:
-      - chronos-cache
+      - "50051:50051"   # gRPC Control Plane
+      - "9090:9090"     # Prometheus Telemetry Ingress
     environment:
-      - REDIS_URL=chronos-cache:6379
+      - REDIS_ADDR=redis-master:6379
+      - REDIS_PASSWORD=secure_token_cluster_pass
+      - APP_ENV=local_development
+      - GRPC_PORT=50051
+    depends_on:
+      redis-master:
+        condition: service_healthy
+    networks:
+      - chronos-mesh
 
-  chronos-cache:
-    image: redis:7-alpine
+  # ============================================================================
+  # 2. REDIS PERSISTENCE NODE (PRIMARY)
+  # ============================================================================
+  redis-master:
+    image: redis:7.2-alpine
+    container_name: chronos_redis_master
+    command: redis-server --appendonly yes --requirepass secure_token_cluster_pass
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    networks:
+      - chronos-mesh
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "secure_token_cluster_pass", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 5
+
+  # ============================================================================
+  # 3. REDIS REPLICA (HIGH AVAILABILITY PATH)
+  # ============================================================================
+  redis-replica:
+    image: redis:7.2-alpine
+    container_name: chronos_redis_replica
+    command: redis-server --replicaof redis-master 6379 --masterauth secure_token_cluster_pass --requirepass secure_token_cluster_pass
+    depends_on:
+      redis-master:
+        condition: service_healthy
+    networks:
+      - chronos-mesh
 
 volumes:
   redis_data:
+    driver: local

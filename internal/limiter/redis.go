@@ -30,7 +30,7 @@ func NewRedisStore(ctx context.Context, addr string, password string, db int) (*
 	if err != nil {
 		return nil, fmt.Errorf("failed to load rate-limiter lua script: %w", err)
 	}
-
+	fmt.Println("Lua Script SHA:", sha)
 	return &RedisStore{
 		client: rdb,
 		luaSHA: sha,

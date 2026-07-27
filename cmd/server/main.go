@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"os_signal"
+	"os/signal"
 	"syscall"
 	"time"
 
@@ -32,8 +32,11 @@ func main() {
 		redisAddr = "localhost:6379" // Local fallback baseline
 	}
 
+	// Extract the password injected by Docker Compose
+  redisPassword := os.Getenv("REDIS_PASSWORD")
+
 	slog.Info("connecting to distributed cache layer", "address", redisAddr)
-	store, err := limiter.NewRedisStore(initCtx, redisAddr, "", 0)
+	store, err := limiter.NewRedisStore(initCtx, redisAddr, redisPassword, 0)
 	if err != nil {
 		slog.Error("fatal: infrastructure bootstrap failed to load distributed store", "error", err)
 		os.Exit(1)

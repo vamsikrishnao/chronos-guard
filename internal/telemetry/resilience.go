@@ -12,23 +12,28 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// ResilienceInterceptor wraps distributed store calls with context deadlines, metrics tracking, and AI-optimized telemetry.
+// Pre-allocated error pointers to prevent runtime heap allocation on validation failures
+var (
+	errMissingTenant = status.Error(codes.InvalidArgument, "missing x-tenant-id metadata context")
+	errRateExhausted = status.Error(codes.ResourceExhausted, "tenant rate limit exceeded")
+)
+
+// ResilienceInterceptor wraps distributed store calls with context deadlines and optimized low-allocation telemetry.
 func ResilienceInterceptor(store limiter.RateLimitStore, defaultLimit int64, defaultWindow time.Duration) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
-		// Extract tenant metadata
+		// Low-allocation extraction: inspect MD without creating deep copies
 		md, ok := metadata.FromIncomingContext(ctx)
-		var tenantID string
-		if ok {
-			if values := md.Get("x-tenant-id"); len(values) > 0 {
-				tenantID = values[0]
-			}
+		if !ok {
+			return nil, errMissingTenant
 		}
 
-		if tenantID == "" {
-			return nil, status.Error(codes.InvalidArgument, "missing x-tenant-id metadata context")
+		values := md["x-tenant-id"]
+		if len(values) == 0 || values[0] == "" {
+			return nil, errMissingTenant
 		}
+		tenantID := values[0]
 
-		// Setup strict 15ms deadline for cache check
+		// Configure strict 15ms deadline for cache check
 		limiterCtx, cancel := context.WithTimeout(ctx, 15*time.Millisecond)
 		defer cancel()
 
@@ -36,13 +41,12 @@ func ResilienceInterceptor(store limiter.RateLimitStore, defaultLimit int64, def
 		res, err := store.TakeAtomic(limiterCtx, tenantID, defaultLimit, defaultWindow, 1)
 		duration := time.Since(startTime)
 
-		// Telemetry: Record latency profile to Prometheus histogram
+		// Record latency profile to Prometheus histogram
 		if Metrics != nil && Metrics.CacheLatency != nil {
 			Metrics.CacheLatency.Observe(duration.Seconds())
 		}
 
 		if err != nil {
-			// Determine specific failure category for the state vector
 			storeState := "cluster_unreachable"
 			reason := "timeout_or_network_error"
 			if limiterCtx.Err() == context.DeadlineExceeded {
@@ -50,7 +54,7 @@ func ResilienceInterceptor(store limiter.RateLimitStore, defaultLimit int64, def
 				reason = "context_deadline_exceeded"
 			}
 
-			// AI-OPTIMIZED STRUCTURED WARN LOG
+			// Emit structured log anomaly frame
 			LogAnomalyStructured(ctx, slog.LevelWarn, "rate limit store error encountered; degrading gracefully", 
 				SystemStateVector{
 					TenantID:   tenantID,
@@ -61,7 +65,6 @@ func ResilienceInterceptor(store limiter.RateLimitStore, defaultLimit int64, def
 				err,
 			)
 
-			// Telemetry: Increment fail-open counter
 			if Metrics != nil && Metrics.FailOpenEvents != nil {
 				Metrics.FailOpenEvents.WithLabelValues(tenantID, reason).Inc()
 			}
@@ -71,7 +74,6 @@ func ResilienceInterceptor(store limiter.RateLimitStore, defaultLimit int64, def
 
 		// Standard Throttling Path
 		if !res.Allowed {
-			// AI-OPTIMIZED STRUCTURED INFO LOG
 			LogAnomalyStructured(ctx, slog.LevelInfo, "tenant rate limit budget exhausted", 
 				SystemStateVector{
 					TenantID:   tenantID,
@@ -82,15 +84,13 @@ func ResilienceInterceptor(store limiter.RateLimitStore, defaultLimit int64, def
 				nil,
 			)
 
-			// Telemetry: Increment request counter labeled as "throttled"
 			if Metrics != nil && Metrics.RequestCounter != nil {
 				Metrics.RequestCounter.WithLabelValues(tenantID, "throttled").Inc()
 			}
 			
-			return nil, status.Error(codes.ResourceExhausted, "tenant rate limit exceeded")
+			return nil, errRateExhausted
 		}
 
-		// Telemetry: Increment request counter labeled as "allowed"
 		if Metrics != nil && Metrics.RequestCounter != nil {
 			Metrics.RequestCounter.WithLabelValues(tenantID, "allowed").Inc()
 		}
