@@ -34,12 +34,23 @@ chronos-guard/
 ├── deploy/
 │   └── kubernetes/
 ├── internal/
-│   ├── limiter/                    # Sliding Window Lua Script for atomic transaction execution
-│   │                               # Manages independent token buckets for isolated tenant
-│   │                               # spaces.
+│   ├── limiter/
+│   │   ├── lua.go                  # Sliding Window Lua Script for atomic transaction execution
+│   │   ├── mock_store.go           # Manages independent token buckets for isolated tenant
+│   │   ├── multitenant.go          # spaces.
+│   │   ├── redis.go                
+│   │   ├── store_test.go           
+│   │   └── store.go                
 │   └── telemetry/                  # Unary and streaming gRPC interceptor middleware logic and
-│                                   # OpenTelemetry tracing hooks and structured JSON logging
-│                                   # Circuit breaker state engine & fail-open boundary control
+│       ├── interceptor.go          # OpenTelemetry tracing hooks and structured JSON logging
+│       ├── logger.go               # Circuit breaker state engine & fail-open boundary control
+│       ├── metrics.go              
+│       ├── resilience_bench_test.go
+│       ├── resilience_chaos_test.go
+│       ├── resilience_e2e_test.go
+│       ├── resilience_telemetry_test.go
+│       ├── resilience_test.go
+│       └── resilience.go 
 ├── proto/
 │   └── chronos/
 │       └── v1/
@@ -47,10 +58,6 @@ chronos-guard/
 │           ├── guard.pb.go         # Generated type-safe serialization structures
 │           └── guard_grpc.pb.go    # Generated gRPC client/server interfaces
 ├── sdks/                           # Central SDK Distribution Directory
-│   ├── go/                         # go get github.com/vamsikrishnao/chronos-guard/sdks/go
-│   │   ├── go.mod
-│   │   ├── client.go               # The Go high-priority middleware wrapper
-│   │   └── pb/                     # Symlinked or copied type-safe compiled stubs
 │   ├── python/                     # Packaged for PyPI (pip install chronos-guard-sdk)
 │   │   ├── pyproject.toml
 │   │   ├── setup.py
@@ -68,8 +75,11 @@ chronos-guard/
 │           ├── chronos_guard.rb
 │           └── chronos_guard/
 │               └── rails_middleware.rb
+├── deployment.yaml
+├── docker-compose.yml
 ├── Dockerfile                      # Hardened, non-root multi-stage compilation engine
 ├── go.mod                          # Module dependency configuration
+├── Makefile                        
 └── README.md                       # Platform documentation
 ```
 
@@ -139,7 +149,11 @@ When evaluating `CheckBudget`, your application framework must handle the respon
 
 ---
 
+
+
 ## 🚀 Production Deployment & Integration
+
+
 
 ### How to Utilise
 
@@ -227,8 +241,6 @@ func checkAgentBudget(tenantID, runID string, tokens int64, signature string) bo
 
 
 ### 🌐 Polyglot SDK Support (Java, Python, Ruby)
-
-
 
 🐍 Python SDK
 
