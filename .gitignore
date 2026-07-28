@@ -1,5 +1,6 @@
 # Compiled binaries
 bin/
+chronos-guard
 *.exe
 *.exe~
 *.dll

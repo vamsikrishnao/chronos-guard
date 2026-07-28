@@ -1,10 +1,3 @@
-# Network Loopback Coupling: The upstream-app points directly to 127.0.0.1:50051.
-# Traffic bypasses the Kubernetes Kube-Proxy routing layer entirely,
-# dropping network overhead down to microsecond execution scales.
-# Native gRPC Probing: Instead of requiring shell utilities or curling arbitrary HTTP endpoints,
-# this configuration uses native grpc probe specs to validate the server connection directly via the gRPC Health Checking Protocol.
-# Resource Sandbox Isolation: Enforces low-footprint request limits on the proxy container (128Mi base memory),
-# ensuring that unexpected application memory leaks cannot starve our sidecar defense layer.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -24,9 +17,7 @@ spec:
         app: account-service
     spec:
       containers:
-        # ==============================================================================
         # 1. THE PLATFORM DEFENSE SIDECAR: CHRONOS-GUARD
-        # ==============================================================================
         - name: chronos-guard-sidecar
           image: vamsikrishnao/chronos-guard:v1.0.0
           imagePullPolicy: IfNotPresent
@@ -35,6 +26,11 @@ spec:
               name: grpc-proxy
             - containerPort: 9090
               name: metrics
+          env:
+            - name: REDIS_ADDR
+              value: "redis-master:6379"
+            - name: REDIS_PASSWORD
+              value: "secure_token_cluster_pass"
           resources:
             limits:
               cpu: "500m"
@@ -42,7 +38,6 @@ spec:
             requests:
               cpu: "100m"
               memory: "128Mi"
-          # Production-grade native gRPC Probe integration
           startupProbe:
             grpc:
               port: 50051
@@ -62,13 +57,10 @@ spec:
             runAsUser: 10001
             allowPrivilegeEscalation: false
 
-        # ==============================================================================
-        # 2. THE CORE APPLICATION SERVICE (e.g., Upstream Workload)
-        # ==============================================================================
+        # 2. THE CORE APPLICATION SERVICE
         - name: upstream-app
           image: vamsikrishnao/account-service:v2.4.0
           env:
-            # The app calls localhost because it shares the pod network namespace
             - name: RATE_LIMIT_PROXY_URL
               value: "127.0.0.1:50051"
             - name: ENVIRONMENT

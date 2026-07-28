@@ -23,21 +23,26 @@ public class ChronosGuardClient {
     }
 
     public CheckBudgetResponse checkBudget(String tenantId, String runId, long tokensSpent, String stateSignature) {
+        String safeTenantId = (tenantId != null && !tenantId.isEmpty()) ? tenantId : "default_tenant";
+        String safeRunId = (runId != null && !runId.isEmpty()) ? runId : "untracked_run";
+        long safeTokens = Math.max(0L, tokensSpent);
+        String safeSig = (stateSignature != null) ? stateSignature : "";
+
         CheckBudgetRequest request = CheckBudgetRequest.newBuilder()
-                .setTenantId(tenantId)
-                .setRunId(runId)
-                .setTokensSpent(tokensSpent)
-                .setStateSignature(stateSignature)
+                .setTenantId(safeTenantId)
+                .setRunId(safeRunId)
+                .setTokensSpent(safeTokens)
+                .setStateSignature(safeSig)
                 .build();
 
         try {
             return blockingStub.withDeadlineAfter(2, TimeUnit.SECONDS).checkBudget(request);
         } catch (Exception e) {
             logger.log(Level.WARNING, "Chronos-Guard proxy path degraded. Adhering to fail-open safety standard.", e);
-            // Default fail-open construct mapping back to the proto enumeration schema
+            // Strict fail-open fallback construction
             return CheckBudgetResponse.newBuilder()
                     .setAction(CheckBudgetResponse.Action.ACTION_ALLOW)
-                    .setReason("Fallback executed cleanly.")
+                    .setReason("Fail-open active: proxy communication degraded.")
                     .build();
         }
     }

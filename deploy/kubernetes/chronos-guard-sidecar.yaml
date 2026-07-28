@@ -14,7 +14,7 @@ spec:
   template:
     metadata:
       labels:
-      app: ai-agent-runtime
+        app: ai-agent-runtime
     spec:
       securityContext:
         runAsNonRoot: true
@@ -46,6 +46,16 @@ spec:
           ports:
             - containerPort: 50051
               name: grpc-guard
+            - containerPort: 9090
+              name: http-metrics
+          env:
+            - name: REDIS_ADDR
+              value: "redis-master.production.svc.cluster.local:6379"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-secrets
+                  key: redis-password
           resources:
             limits:
               cpu: "500m"
@@ -59,8 +69,8 @@ spec:
             capabilities:
               drop:
                 - ALL
-          
-          # Native gRPC Probes for Reliable Lifecycle Management
+
+          # Native gRPC Probes
           startupProbe:
             grpc:
               port: 50051

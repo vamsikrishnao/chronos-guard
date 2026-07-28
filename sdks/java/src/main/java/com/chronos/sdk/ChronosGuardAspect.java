@@ -20,18 +20,24 @@ public class ChronosGuardAspect {
 
     @Around("@annotation(com.chronos.sdk.GuardedAgentStep) && args(contextMap,..)")
     public Object enforceGuardrails(ProceedingJoinPoint joinPoint, Map<String, Object> contextMap) throws Throwable {
-        String tenantId = (String) contextMap.getOrDefault("tenant_id", "default_tenant");
-        String runId = (String) contextMap.getOrDefault("run_id", "untracked_run");
-        long tokensSpent = (long) contextMap.getOrDefault("tokens_spent", 0L);
-        String signature = (String) contextMap.getOrDefault("state_signature", "");
+        String tenantId = String.valueOf(contextMap.getOrDefault("tenant_id", "default_tenant"));
+        String runId = String.valueOf(contextMap.getOrDefault("run_id", "untracked_run"));
+        
+        // Safe numeric parsing preventing ClassCastException if caller passes Integer, Long, Double, etc.
+        long tokensSpent = 0L;
+        Object tokensObj = contextMap.get("tokens_spent");
+        if (tokensObj instanceof Number) {
+            tokensSpent = Math.max(0L, ((Number) tokensObj).longValue());
+        }
+
+        String signature = String.valueOf(contextMap.getOrDefault("state_signature", ""));
 
         CheckBudgetResponse response = client.checkBudget(tenantId, runId, tokensSpent, signature);
 
         if (response.getAction() == CheckBudgetResponse.Action.ACTION_BLOCK) {
-            throw new RuntimeException("AI agent execution blocked by platform layer. Reason: " + response.getReason());
+            throw new RuntimeException("AI agent execution blocked by platform guardrails: " + response.getReason());
         } else if (response.getAction() == CheckBudgetResponse.Action.ACTION_THROTTLE) {
-            // Apply platform delay penalty standard
-            Thread.sleep(100);
+            Thread.sleep(100); // Standard platform micro-delay
         }
 
         return joinPoint.proceed();

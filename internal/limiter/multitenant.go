@@ -2,34 +2,72 @@ package limiter
 
 import (
 	"sync"
+	"time"
+
 	"golang.org/x/time/rate"
 )
 
-// TenantLimiter manages independent token buckets for isolated tenant spaces.
+type tenantEntry struct {
+	limiter  *rate.Limiter
+	lastSeen time.Time
+}
+
+// TenantLimiter manages independent token buckets with automated TTL memory eviction.
 type TenantLimiter struct {
-	limiters sync.Map
+	mu       sync.Mutex
+	limiters map[string]*tenantEntry
 	r        rate.Limit
 	b        int
+	ttl      time.Duration
 }
 
-// NewTenantLimiter instantiates a configuration profile.
-// r = fill rate (tokens per second), b = burst capacity.
+// NewTenantLimiter instantiates a configuration profile with background TTL eviction.
 func NewTenantLimiter(r rate.Limit, b int) *TenantLimiter {
-	return &TenantLimiter{
-		r: r,
-		b: b,
+	tl := &TenantLimiter{
+		limiters: make(map[string]*tenantEntry),
+		r:        r,
+		b:        b,
+		ttl:      30 * time.Minute,
 	}
+
+	// Background sweeper goroutine to evict inactive tenants
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		for range ticker.C {
+			tl.evictStale()
+		}
+	}()
+
+	return tl
 }
 
-// GetLimiter safely fetches or generates a token bucket for a specific tenant.
+// GetLimiter fetches or instantiates a rate limiter for a specific tenant ID.
 func (tl *TenantLimiter) GetLimiter(tenantID string) *rate.Limiter {
-	limiter, exists := tl.limiters.Load(tenantID)
-	if exists {
-		return limiter.(*rate.Limiter)
+	tl.mu.Lock()
+	defer tl.mu.Unlock()
+
+	now := time.Now()
+	if entry, exists := tl.limiters[tenantID]; exists {
+		entry.lastSeen = now
+		return entry.limiter
 	}
 
-	// Double-checked locking pattern via LoadOrStore to avoid allocation race conditions
-	newLimiter := rate.NewLimiter(tl.r, tl.b)
-	actual, _ := tl.limiters.LoadOrStore(tenantID, newLimiter)
-	return actual.(*rate.Limiter)
+	limiter := rate.NewLimiter(tl.r, tl.b)
+	tl.limiters[tenantID] = &tenantEntry{
+		limiter:  limiter,
+		lastSeen: now,
+	}
+	return limiter
+}
+
+func (tl *TenantLimiter) evictStale() {
+	tl.mu.Lock()
+	defer tl.mu.Unlock()
+
+	now := time.Now()
+	for tenantID, entry := range tl.limiters {
+		if now.Sub(entry.lastSeen) > tl.ttl {
+			delete(tl.limiters, tenantID)
+		}
+	}
 }
