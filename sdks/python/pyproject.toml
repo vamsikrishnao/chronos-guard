@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chronos-guard-sdk"
+version = "1.0.0"
+description = "Production-grade client SDK and decorators for the Chronos-Guard platform defense layer"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "grpcio>=1.60.0",
+    "protobuf>=4.25.0"
+]

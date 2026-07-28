@@ -39,13 +39,35 @@ chronos-guard/
 │   │                               # spaces.
 │   └── telemetry/                  # Unary and streaming gRPC interceptor middleware logic and
 │                                   # OpenTelemetry tracing hooks and structured JSON logging
-│                                   # Circuit breaker state engine and fail-open boundary control
+│                                   # Circuit breaker state engine & fail-open boundary control
 ├── proto/
 │   └── chronos/
 │       └── v1/
 │           ├── guard.proto         # Protocol Buffer contract for GuardService
 │           ├── guard.pb.go         # Generated type-safe serialization structures
 │           └── guard_grpc.pb.go    # Generated gRPC client/server interfaces
+├── sdks/                           # Central SDK Distribution Directory
+│   ├── go/                         # go get github.com/vamsikrishnao/chronos-guard/sdks/go
+│   │   ├── go.mod
+│   │   ├── client.go               # The Go high-priority middleware wrapper
+│   │   └── pb/                     # Symlinked or copied type-safe compiled stubs
+│   ├── python/                     # Packaged for PyPI (pip install chronos-guard-sdk)
+│   │   ├── pyproject.toml
+│   │   ├── setup.py
+│   │   └── chronos_guard/
+│   │       ├── __init__.py
+│   │       └── decorator.py        # The @guard_budget decorator logic
+│   ├── java/                       # Configured for Maven/Central (pom.xml)
+│   │   ├── pom.xml
+│   │   └── src/main/java/com/chronos/sdk/
+│   │       ├── ChronosGuardClient.java
+│   │       └── ChronosGuardAspect.java
+│   └── ruby/                       # Packaged as a RubyGem (gem install chronos-guard-sdk)
+│       ├── chronos-guard-sdk.gemspec
+│       └── lib/
+│           ├── chronos_guard.rb
+│           └── chronos_guard/
+│               └── rails_middleware.rb
 ├── Dockerfile                      # Hardened, non-root multi-stage compilation engine
 ├── go.mod                          # Module dependency configuration
 └── README.md                       # Platform documentation
@@ -53,9 +75,71 @@ chronos-guard/
 
 
 
+## 🎯 Enterprise Use Cases & Production Scenarios
+
+While Chronos-Guard exposes a single, highly optimized API (`CheckBudget`), it acts as the centralized enforcement engine for critical business logic across several distributed architecture patterns. 
+
+Here is how organizations deploy this system to solve real-world AI scale and safety problems:
+
+### 1. The Autonomous LLM Agent Loop Safeguard
+
+- **The Problem:** An autonomous customer support agent gets trapped in an infinite tools-execution loop (e.g., Agent calls Tool A $\rightarrow$ Tool A output confuses LLM $\rightarrow$ Agent calls Tool A again), consuming massive API budgets and hanging indefinitely.
+- **How Chronos-Guard Solves It:** Before the runtime framework executes the next step in the loop, it dispatches a `CheckBudgetRequest` containing the current `state_signature` (a hash of the agent's history and memory parameters). Chronos-Guard detects identical state transitions or token velocities spiking within the same `run_id` and fires back an `ACTION_BLOCK`, forcing the agent framework to cleanly abort the runaway execution path.
+
+
+
+### 2. Multi-Tenant API Cost Allocation & Circuit Breaking
+
+- **The Problem:** In a B2B SaaS platform, a single enterprise tenant spins up thousands of concurrent document-processing agents. Their sudden consumption spikes saturate the company's OpenAI/Anthropic enterprise API quotas, causing immediate throttling for every other customer on the platform.
+- **How Chronos-Guard Solves It:** Every microservice running an AI workload sends a `CheckBudgetRequest` sharded by `tenant_id`. Chronos-Guard checks the cumulative `tokens_spent` against sliding-window memory quotas in Redis. If Tenant A approaches their tier limit, it returns `ACTION_THROTTLE` to smoothly inject micro-delays into their specific workers. If they breach the hard ceiling, it trips the circuit breaker with `ACTION_BLOCK`, isolating the blast radius entirely to Tenant A while keeping the rest of the platform responsive.
+
+
+
+### 3. Distributed AI Pipeline Observability & Audit Trails
+
+- **The Problem:** Auditing AI spending across a polyglot microservice ecosystem (e.g., Python for the LLM orchestration layer, Go for internal high-speed routing, Java for legacy core banking logic) is fragmented, making it impossible to map operational costs to specific application flows.
+- **How Chronos-Guard Solves It:** By requiring all heterogeneous services to check in with the centralized sidecar before processing an inference boundary, the `CheckBudget` request acts as a uniform telemetry checkpoint. It correlates `run_id` and `tokens_spent` with OpenTelemetry distributed trace headers, writing structured JSON audit logs directly to standard output. This gives platform engineering teams a single pane of glass for real-time cost accounting across the entire enterprise stack.
+
+---
+
+
+
+## 🏗️ Architecture Flow: Inline Guardrail Transit
+
+```text
+[ Application Worker ]                [ Local Sidecar Namespace ]           [ Distributed Cache ]
+  (Go/Python/Java/Ruby)                  (Chronos-Guard Proxy)                    (Redis)
+           │                                       │                                 │
+           │ ─── 1. CheckBudgetRequest ──────────> │                                 │
+           │      (tenant, run_id, tokens)         │                                 │
+           │                                       │ ─── 2. Evaluate state & cost ─> │
+           │                                       │      (Atomic sliding-window)    │
+           │                                       │                                 │
+           │                                       │ <── 3. Return Metrics/State ─── │
+           │                                       │                                 │
+           │ <── 4. CheckBudgetResponse ────────── │                                 │
+           │      (ALLOW / THROTTLE / BLOCK)       │                                 │
+```
+
+---
+
+
+
+## 🚀 Production Integration & SDK Quickstart
+
+Chronos-Guard provides native, zero-boilerplate SDK clients and middleware adapters for Go, Python, Java, and Ruby. The SDKs automatically handle local loopback gRPC connection pooling (`127.0.0.1:50051`), transaction deadline timeouts, and enforce a strict **fail-open safety standard** if the proxy layer becomes unavailable.
+
+### 📊 Runtime Decision Matrix
+
+When evaluating `CheckBudget`, your application framework must handle the response actions as follows:
+
+- `ACTION_ALLOW`: The agent loop is operating safely within bounds. Proceed with the execution step immediately.
+- `ACTION_THROTTLE`: Early loop signatures or budget warnings detected. The SDK automatically injects a deliberate $100\text{ms}$ delay to backoff execution gracefully.
+- `ACTION_BLOCK`: Hard budget ceiling breached or infinite loop confirmed. **Abort the execution step immediately**, roll back uncommitted transactions, and alert your application runtime.
+
+---
+
 ## 🚀 Production Deployment & Integration
-
-
 
 ### How to Utilise
 
@@ -72,7 +156,16 @@ Mount the chronos-guard-proxy alongside your primary worker container within you
 
 ### How to Use in Code
 
-### 🐹 Go Integration
+To utilize Chronos-Guard in Go environment, developers first generate native client stubs from the central `guard.proto` contract using the `protoc` compiler plugins.
+
+```bash
+# Generate Go Stubs
+protoc --go_out=. --go-grpc_out=. proto/chronos/v1/guard.proto
+```
+
+
+
+###### 🐹 Go Integration
 
 ```Go
 package main
@@ -131,6 +224,111 @@ func checkAgentBudget(tenantID, runID string, tokens int64, signature string) bo
 }
 ```
 
+
+
+### 🌐 Polyglot SDK Support (Java, Python, Ruby)
+
+
+
+🐍 Python SDK
+
+```python
+pip install chronos-guard-sdk
+```
+
+```python
+# Approach A: Passing a Dictionary Context
+
+from chronos_guard import ChronosGuardClient, guard_budget
+
+client = ChronosGuardClient()
+
+@guard_budget(client_instance=client)
+def execute_agent_loop(agent_context: dict):
+    # Core LLM tool orchestrations happen here cleanly
+    print("Agent step running safely within budget limits.")
+
+# Execution is clean and readable:
+context = {
+    "tenant_id": "tenant-prod-100",
+    "run_id": "run-uuid-999x",
+    "tokens_spent": 420,
+    "state_signature": "8f3b20a1..."
+}
+
+execute_agent_loop(context)
+```
+
+```python
+# Approach B: Passing a Structured Object / Data Class
+
+from dataclasses import dataclass
+from chronos_guard import ChronosGuardClient, guard_budget
+
+client = ChronosGuardClient()
+
+@dataclass
+class AgentContext:
+    tenant_id: str
+    run_id: str
+    tokens_spent: int
+    state_signature: str
+
+@guard_budget(client_instance=client)
+def execute_agent_step(ctx: AgentContext):
+    # Core execution path
+    pass
+
+# Execution:
+my_context = AgentContext("tenant-99", "run-abc", 150, "e3b0c442...")
+execute_agent_step(my_context)
+```
+
+
+
+#### ☕ Java / Spring Boot SDK
+
+```xml
+<!-- Add dependency coordinate stub to your pom.xml -->
+<dependency>
+    <groupId>com.vamsikrishnao.chronos</groupId>
+    <artifactId>chronos-guard-sdk</artifactId>
+    <version>1.0.0</version>
+</dependency>
+```
+
+```java
+// Leverage clean Aspect-Oriented Programming (AOP) to auto-intercept steps
+@GuardedAgentStep
+public void processAgentPipeline(Map<String, Object> contextMap) {
+    // Automatically evaluates tenant_id, run_id, and signatures from the context map
+    // Throws a RuntimeException immediately if ACTION_BLOCK is returned
+}
+```
+
+
+
+#### 💎 Ruby on Rails SDK
+
+```ruby
+# Gemfile
+gem 'chronos-guard-sdk', path: 'sdks/ruby'
+```
+
+```ruby
+# Intercept asynchronous jobs cleanly using ActiveJob Server Middleware
+class OpenAIAgentJob < ApplicationJob
+  # Middleware automatically intercepts, processes throttles, or halts on ACTION_BLOCK
+  include ChronosGuard::RailsMiddleware
+
+  def perform(payload)
+    # Execute non-deterministic execution tasks safely
+  end
+end
+```
+
+
+
 ### How to Debug
 
 - Trace Analysis via OpenTelemetry: Every evaluation request context generates a distinct trace vector. Inspect downstream spans within your distributed tracing dashboard (e.g., Jaeger) to isolate latency anomalies or verify interceptor overhead.
@@ -142,6 +340,8 @@ func checkAgentBudget(tenantID, runID string, tokens int64, signature string) bo
   ```bash
   grpcurl -plaintext -d '{"tenant_id": "test-debug", "agent_id": "probe"}' localhost:50051 chronos.v1.GuardService/EvaluateLoop
   ```
+
+
 
 ## 👥 Contributor & Consumer Guidelines
 
@@ -156,16 +356,22 @@ To maintain the architectural integrity, sub-millisecond execution speeds, and z
   protoc --go_out=. --go-grpc_out=. proto/chronos/v1/guard.proto
   ```
 
+
+
 ### ⚡ Non-Blocking State Operations
 
 - O(1) Execution Metrics: The distributed state engine relies on atomic Redis transactional models. All sliding-window evaluators, token accounting operations, and loop metrics must maintain strict O(1) time complexity profiles.
 - No Blocking Commands: The use of blocking primitives (e.g., KEYS, SMEMBERS on large sets, or long-running Lua scripts) is explicitly banned. Any state evaluations that risk blocking execution threads will fail validation during peer review.
 - Connection Pooling: Always leverage the authenticated thread-safe connection pool (Pool) for external state calls. Opening or closing ad-hoc TCP connections inside the execution interceptor path is prohibited.
 
+
+
 ### 🛡️ Resilience & Fail-Safe Invariants
 
 - Strict Fail-Open Safety: Interceptor logic must consistently protect the availability of core platform services. If a state engine or database dependency throws an unhandled error or a strict timeout occurs, the proxy must log the degradation and gracefully fall back to a structured fail-open state.
 - Circuit Breaker Boundaries: The deterministic state transitions (Allow, Throttle, Block) must remain independent per tenant. Ensure no cross-tenant state leakage or global shared state counters are introduced outside of explicit global throttle quotas.
+
+
 
 ### 🧪 Regression Verification Matrix
 
@@ -176,169 +382,3 @@ To maintain the architectural integrity, sub-millisecond execution speeds, and z
   ```
 - Coverage Requirements: Any new evaluation parameters or circuit-breaking behaviors require corresponding unit test coverage alongside explicit failure injection blocks to verify fallback states.
 
-## 🌐 Multi-Language Production Integration
-
-To utilize Chronos-Guard in polyglot environments, developers first generate native client stubs from the central `guard.proto` contract using the language-specific `protoc` compiler plugins.
-
-### ☕ Java / Spring Boot Integration
-
-Java applications utilize the high-performance `grpc-netty-shaded` dependency to connect over the local network namespace.
-
-```java
-import io.grpc.ManagedChannel;
-import io.grpc.ManagedChannelBuilder;
-import chronos.v1.GuardServiceGrpc;
-import chronos.v1.Chronos.CheckBudgetRequest;
-import chronos.v1.Chronos.CheckBudgetResponse;
-
-import java.util.concurrent.TimeUnit;
-
-public class ChronosGuardClient {
-    private final GuardServiceGrpc.GuardServiceBlockingStub blockingStub;
-
-    public ChronosGuardClient() {
-        // Wire to the high-performance loopback proxy target
-        ManagedChannel channel = ManagedChannelBuilder.forAddress("127.0.0.1", 50051)
-                .usePlaintext()
-                .build();
-        this.blockingStub = GuardServiceGrpc.newBlockingStub(channel);
-    }
-
-    public boolean isBudgetValid(String tenantId, String runId, long tokensSpent, String signature) {
-        CheckBudgetRequest request = CheckBudgetRequest.newBuilder()
-                .setTenantId(tenantId)
-                .setRunId(runId)
-                .setTokensSpent(tokensSpent)
-                .setStateSignature(signature)
-                .build();
-
-        try {
-            // Send inline message vector with explicit transit timeout
-            CheckBudgetResponse response = blockingStub.withDeadlineAfter(2, TimeUnit.SECONDS)
-                    .checkBudget(request);
-            
-            if (response.getAction() == CheckBudgetResponse.Action.ACTION_BLOCK) {
-                System.err.println("Execution blocked. Reason: " + response.getReason());
-                return false;
-            }
-            
-            if (response.getAction() == CheckBudgetResponse.Action.ACTION_THROTTLE) {
-                System.out.println("Execution throttled. Reason: " + response.getReason());
-                Thread.sleep(100); // Inject delay block
-            }
-            
-            return true;
-        } catch (Exception e) {
-            // Fail-open infrastructure invariant
-            System.err.println("Chronos-Guard exception captured: " + e.getMessage() + ". Defaulting to ALLOW.");
-            return true;
-        }
-    }
-}
-```
-
-### 🐍 Python Integration
-
-Python applications (e.g., FastAPI or Celery tasks managing AI agents) utilize the native asynchronous gRPC library.
-
-```python
-import grpc
-import time
-import chronos_pb2
-import chronos_pb2_grpc
-
-def check_agent_budget(tenant_id: str, run_id: str, tokens_spent: int, state_signature: str) -> bool:
-    # Bind to local sidecar proxy namespace
-    with grpc.insecure_channel('127.0.0.1:50051') as channel:
-        stub = chronos_pb2_grpc.GuardServiceStub(channel)
-        
-        request = chronos_pb2.CheckBudgetRequest(
-            tenant_id=tenant_id,
-            run_id=run_id,
-            tokens_spent=tokens_spent,
-            state_signature=state_signature
-        )
-        
-        try:
-            # Enforce microsecond inspection timeout bounds
-            response = stub.CheckBudget(request, timeout=2.0)
-            
-            if response.action == chronos_pb2.CheckBudgetResponse.ACTION_BLOCK:
-                print(f"Execution blocked. Reason: {response.reason}")
-                return False
-                
-            if response.action == chronos_pb2.CheckBudgetResponse.ACTION_THROTTLE:
-                print(f"Execution throttled. Reason: {response.reason}")
-                time.sleep(0.1) # Inject deliberate latency delay
-                
-            return True
-            
-        except grpc.RpcError as e:
-            # Resiliency fallback standard: Fail open
-            print(f"Chronos-Guard transit degraded ({e.code()}). Falling open.")
-            return True
-```
-
-### 💎 Ruby on Rails Integration
-
-For modern enterprise Rails apps serving asynchronous background jobs or running middleware layers, the standard `grpc` gem provides synchronous, low-overhead loopback execution.
-
-```ruby
-require 'grpc'
-require 'proto/guard_services_pb'
-
-class ChronosGuardClient
-  def self.check_budget?(tenant_id, run_id, tokens_spent, state_signature)
-    # Establish local loopback communication endpoint
-    stub = Chronos::V1::GuardService::Stub.new('127.0.0.1:50051', :this_channel_is_insecure)
-    
-    request = Chronos::V1::CheckBudgetRequest.new(
-      tenant_id: tenant_id,
-      run_id: run_id,
-      tokens_spent: tokens_spent,
-      state_signature: state_signature
-    )
-    
-    begin
-      # Execute type-safe evaluation transit
-      response = stub.check_budget(request, deadline: Time.now + 2)
-      
-      if response.action == :ACTION_BLOCK
-        Rails.logger.warn("Chronos-Guard blocked execution. Reason: #{response.reason}")
-        return false
-      end
-      
-      if response.action == :ACTION_THROTTLE
-        Rails.logger.warn("Chronos-Guard throttled execution. Reason: #{response.reason}")
-        sleep(0.1) # Deliberate slowdown
-      end
-      
-      true
-    rescue GRPC::BadStatus => e
-      # Secure fail-open design variant
-      Rails.logger.error("Chronos-Guard sidecar connection failure: #{e.message}. System failing open.")
-      true
-    end
-  end
-end
-```
-
-### 🌐 Polyglot Support (Java, Python, Ruby)
-
-Chronos-Guard exposes a pure, language-agnostic gRPC interface. Any microservice ecosystem that supports Protocol Buffers can interface directly with the sidecar over `127.0.0.1:50051`.
-
-To generate code stubs for your specific application stack, execute `protoc` targeting your runtime language:
-
-```bash
-# Generate Go Stubs
-protoc --go_out=. --go-grpc_out=. proto/chronos/v1/guard.proto
-
-# Generate Java Stubs
-protoc --java_out=. --grpc-java_out=. proto/chronos/v1/guard.proto
-
-# Generate Python Stubs
-python -m grpc_tools.protoc -I. --python_out=. --grpc_python_out=. proto/chronos/v1/guard.proto
-
-# Generate Ruby Stubs
-grpc_tools_ruby_protoc -I. --ruby_out=. --grpc_out=. proto/chronos/v1/guard.proto
-```
