@@ -17,3 +17,6 @@ chronos-guard
 .vscode/
 .DS_Store
 vendor/
+
+# Local environment variables
+.env

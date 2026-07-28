@@ -30,7 +30,10 @@ spec:
             - name: REDIS_ADDR
               value: "redis-master:6379"
             - name: REDIS_PASSWORD
-              value: "secure_token_cluster_pass"
+              valueFrom:
+                secretKeyRef:
+                  name: redis-secrets
+                  key: redis-password
           resources:
             limits:
               cpu: "500m"

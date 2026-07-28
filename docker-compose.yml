@@ -18,7 +18,7 @@ services:
       - "9090:9090"     # Prometheus Telemetry Ingress
     environment:
       - REDIS_ADDR=redis-master:6379
-      - REDIS_PASSWORD=secure_token_cluster_pass
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
       - APP_ENV=local_development
       - GRPC_PORT=50051
     depends_on:
@@ -33,7 +33,7 @@ services:
   redis-master:
     image: redis:7.2-alpine
     container_name: chronos_redis_master
-    command: redis-server --appendonly yes --requirepass secure_token_cluster_pass
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
     ports:
       - "6379:6379"
     volumes:
@@ -41,7 +41,7 @@ services:
     networks:
       - chronos-mesh
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "secure_token_cluster_pass", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 3s
       timeout: 2s
       retries: 5
@@ -52,7 +52,7 @@ services:
   redis-replica:
     image: redis:7.2-alpine
     container_name: chronos_redis_replica
-    command: redis-server --replicaof redis-master 6379 --masterauth secure_token_cluster_pass --requirepass secure_token_cluster_pass
+    command: redis-server --replicaof redis-master 6379 --masterauth ${REDIS_PASSWORD} --requirepass ${REDIS_PASSWORD}
     depends_on:
       redis-master:
         condition: service_healthy
