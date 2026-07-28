@@ -356,7 +356,7 @@ All teams consuming or contributing to this service tier must adhere to the foll
 
 
 
-## 🏛️ Architecture Benefits
+## 🏛️ Architecture considerations
 
 
 
